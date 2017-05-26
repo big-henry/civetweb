@@ -355,9 +355,6 @@ void *pthread_getspecific(pthread_key_t key)
 #define CGI_ENVIRONMENT_SIZE 4096
 #define MAX_CGI_ENVIR_VARS 64
 #define MG_BUF_LEN 8192
-#ifndef MAX_REQUEST_SIZE
-#define MAX_REQUEST_SIZE 16384
-#endif
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof(array[0]))
 
 #if !defined(DEBUG_TRACE)
@@ -710,7 +707,7 @@ enum {
 #if defined(USE_LUA) && defined(USE_WEBSOCKET)
     LUA_WEBSOCKET_EXTENSIONS,
 #endif
-    ACCESS_CONTROL_ALLOW_ORIGIN, ERROR_PAGES,
+    ACCESS_CONTROL_ALLOW_ORIGIN, ERROR_PAGES, MAX_REQUEST_SIZE,
 
     NUM_OPTIONS
 };
@@ -761,6 +758,7 @@ static struct mg_option config_options[] = {
 #endif
     {"access_control_allow_origin", CONFIG_TYPE_STRING,        "*"},
     {"error_pages",                 CONFIG_TYPE_DIRECTORY,     NULL},
+    {"max_request_size",            CONFIG_TYPE_NUMBER,        "16384"},
 
     {NULL, CONFIG_TYPE_UNKNOWN, NULL}
 };
@@ -6434,11 +6432,12 @@ static struct mg_connection *mg_connect(const char *host, int port, int use_ssl,
     static struct mg_context fake_ctx;
     struct mg_connection *conn = NULL;
     SOCKET sock;
+    int max_request_size = atoi(config_options[MAX_REQUEST_SIZE].default_value);
 
     if ((sock = conn2(&fake_ctx, host, port, use_ssl, ebuf,
                       ebuf_len)) == INVALID_SOCKET) {
     } else if ((conn = (struct mg_connection *)
-                       mg_calloc(1, sizeof(*conn) + MAX_REQUEST_SIZE)) == NULL) {
+                       mg_calloc(1, sizeof(*conn) + max_request_size)) == NULL) {
         snprintf(ebuf, ebuf_len, "calloc(): %s", strerror(ERRNO));
         closesocket(sock);
 #ifndef NO_SSL
@@ -6451,7 +6450,7 @@ static struct mg_connection *mg_connect(const char *host, int port, int use_ssl,
 #endif /* NO_SSL */
     } else {
         socklen_t len = sizeof(struct sockaddr);
-        conn->buf_size = MAX_REQUEST_SIZE;
+        conn->buf_size = max_request_size;
         conn->buf = (char *) (conn + 1);
         conn->ctx = &fake_ctx;
         conn->client.sock = sock;
@@ -6657,18 +6656,19 @@ static void *worker_thread_run(void *thread_func_param)
     struct mg_context *ctx = (struct mg_context *) thread_func_param;
     struct mg_connection *conn;
     struct mg_workerTLS tls;
+    int max_request_size = atoi(ctx->config[MAX_REQUEST_SIZE]);
 
     tls.is_master = 0;
 #if defined(_WIN32) && !defined(__SYMBIAN32__)
     tls.pthread_cond_helper_mutex = CreateEvent(NULL, FALSE, FALSE, NULL);
 #endif
 
-    conn = (struct mg_connection *) mg_calloc(1, sizeof(*conn) + MAX_REQUEST_SIZE);
+    conn = (struct mg_connection *) mg_calloc(1, sizeof(*conn) + max_request_size);
     if (conn == NULL) {
         mg_cry(fc(ctx), "%s", "Cannot create new connection struct, OOM");
     } else {
         pthread_setspecific(sTlsKey, &tls);
-        conn->buf_size = MAX_REQUEST_SIZE;
+        conn->buf_size = max_request_size;
         conn->buf = (char *) (conn + 1);
         conn->ctx = ctx;
         conn->request_info.user_data = ctx->user_data;
